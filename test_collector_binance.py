@@ -158,6 +158,20 @@ class CollectorBinanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first_values["new_field"], "")
         self.assertEqual(second_values["new_field"], "extra")
 
+    async def test_csv_sink_handles_idle_timeout_without_error(self) -> None:
+        sink = CsvSink(
+            output_dir=Path(tempfile.mkdtemp()),
+            flush_rows=10,
+            flush_interval_seconds=0.01,
+            queue_maxsize=10,
+            open_file_limit=4,
+        )
+        sink_task = asyncio.create_task(sink.run())
+        await asyncio.sleep(0.05)
+        self.assertFalse(sink_task.done())
+        await sink.close()
+        await sink_task
+
 
 if __name__ == "__main__":
     unittest.main()

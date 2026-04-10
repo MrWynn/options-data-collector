@@ -60,7 +60,7 @@ class CsvSink:
                         self.queue.get(),
                         timeout=self.flush_interval_seconds,
                     )
-                except TimeoutError:
+                except asyncio.TimeoutError:
                     self._flush_due(force=False)
                     continue
 
