@@ -7,6 +7,7 @@ VENV_DIR="${VENV_DIR:-$APP_DIR/venv}"
 VENV_PYTHON="$VENV_DIR/bin/python"
 VENV_PIP="$VENV_DIR/bin/pip"
 PYTHON_BIN="${PYTHON_BIN:-$VENV_PYTHON}"
+COLLECTOR_COMMAND="${2:-${COLLECTOR_COMMAND:-run}}"
 UNDERLYINGS="${UNDERLYINGS:-BTC}"
 OUTPUT_DIR="${OUTPUT_DIR:-$APP_DIR/data}"
 LOG_DIR="${LOG_DIR:-$APP_DIR/logs}"
@@ -19,10 +20,18 @@ STOP_TIMEOUT="${STOP_TIMEOUT:-20}"
 
 mkdir -p "$LOG_DIR" "$RUN_DIR"
 
+case "$COLLECTOR_COMMAND" in
+  run|deribit-books) ;;
+  *)
+    echo "collector command must be run or deribit-books" >&2
+    exit 1
+    ;;
+esac
+
 CMD=(
   "$PYTHON_BIN"
   "$APP_DIR/collector_main.py"
-  run
+  "$COLLECTOR_COMMAND"
   --underlyings "$UNDERLYINGS"
   --output-dir "$OUTPUT_DIR"
 )
@@ -158,12 +167,17 @@ restart_collector() {
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") {start|stop|restart|status}
+Usage: $(basename "$0") {start|stop|restart|status} [run|deribit-books]
+
+Collector command:
+  The optional second argument selects run or deribit-books, default: run.
+  COLLECTOR_COMMAND remains supported when the second argument is omitted.
 
 Environment overrides:
   BASE_PYTHON_BIN Base Python used to create venv, default: python3
   VENV_DIR        Virtualenv directory, default: $APP_DIR/venv
   PYTHON_BIN      Python executable used to run collector, default: $VENV_PYTHON
+  COLLECTOR_COMMAND Fallback collector command when no second argument is given
   UNDERLYINGS     Underlyings passed to the collector, default: BTC
   OUTPUT_DIR      Collector CSV output directory, default: $APP_DIR/data
   LOG_DIR         Directory for logs, default: $APP_DIR/logs

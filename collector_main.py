@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from collector_config import CollectorConfig
+from collector_deribit_options_books import run_deribit_options_books
 from collector_discovery import discover_matched_options
 from collector_lark import notify_exit
 from collector_planner import build_runtime_plan
@@ -22,10 +23,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect matched Binance/Deribit option data.")
     parser.add_argument(
         "command",
-        choices=("discover", "run"),
+        choices=("discover", "run", "deribit-books"),
         nargs="?",
         default="run",
-        help="discover matched instruments or run the collector",
+        help="discover matches, run the legacy collector, or run dynamic Deribit books",
     )
     parser.add_argument(
         "--underlyings",
@@ -97,7 +98,10 @@ def main() -> int:
             )
             return 0
 
-        asyncio.run(run_collector(config))
+        if args.command == "deribit-books":
+            asyncio.run(run_deribit_options_books(config))
+        else:
+            asyncio.run(run_collector(config))
         return 0
     except TerminationRequested as exc:
         exit_code = 130

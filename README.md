@@ -6,6 +6,7 @@ Collects matched option market data from Binance Options and Deribit, normalizes
 
 - Discovers matched option contracts between Binance and Deribit for configured underlyings and target expiries.
 - Subscribes to Binance and Deribit websocket streams for both orderbook and trade data.
+- Dynamically selects Deribit BTC options nearest to +/-0.3 Delta across the third through seventh expirations.
 - Saves data into per-exchange, per-date, per-type, per-instrument CSV files.
 - Preserves exchange message field names in CSV output and keeps exchange timestamps as raw Unix milliseconds.
 - Writes periodic sink health logs and sends a Lark notification when the process exits.
@@ -52,6 +53,16 @@ Multiple underlyings:
 python collector_main.py run --underlyings BTC,ETH --output-dir data
 ```
 
+Run the dynamic Deribit BTC option book collector:
+
+```bash
+python collector_main.py deribit-books --output-dir data
+```
+
+This command monitors Delta for all options in the third through seventh active
+BTC option expirations. It writes one snapshot per second for the nearest +0.3
+Delta Call and -0.3 Delta Put in each expiration.
+
 ## Output
 
 CSV files are written under:
@@ -65,6 +76,12 @@ Examples:
 ```text
 data/binance/2026-04-10/trade/BTC-260417-63000-P.csv
 data/deribit/2026-04-10/orderbook/BTC-17APR26-63000-P.csv
+```
+
+The `deribit-books` command writes one daily UTC file:
+
+```text
+data/deribit_options_books_2026-04-10.csv
 ```
 
 ## Linux Server Usage
@@ -103,6 +120,19 @@ Useful environment overrides:
 BASE_PYTHON_BIN=/usr/bin/python3 ./collector_ctl.sh start
 UNDERLYINGS=BTC,ETH ./collector_ctl.sh start
 OUTPUT_DIR=/home/ec2-user/app/jason/options/data ./collector_ctl.sh start
+```
+
+Run the dynamic Deribit book collector in the background:
+
+```bash
+./collector_ctl.sh start deribit-books
+```
+
+The previous environment-variable form remains supported when no command
+argument is provided:
+
+```bash
+COLLECTOR_COMMAND=deribit-books ./collector_ctl.sh start
 ```
 
 ## Logs and Monitoring
