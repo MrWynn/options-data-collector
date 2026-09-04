@@ -8,7 +8,7 @@ VENV_PYTHON="$VENV_DIR/bin/python"
 VENV_PIP="$VENV_DIR/bin/pip"
 PYTHON_BIN="${PYTHON_BIN:-$VENV_PYTHON}"
 COLLECTOR_COMMAND="${2:-${COLLECTOR_COMMAND:-run}}"
-UNDERLYINGS="${UNDERLYINGS:-BTC}"
+UNDERLYINGS="${UNDERLYINGS:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-$APP_DIR/data}"
 LOG_DIR="${LOG_DIR:-$APP_DIR/logs}"
 RUN_DIR="${RUN_DIR:-$APP_DIR/run}"
@@ -32,9 +32,12 @@ CMD=(
   "$PYTHON_BIN"
   "$APP_DIR/collector_main.py"
   "$COLLECTOR_COMMAND"
-  --underlyings "$UNDERLYINGS"
   --output-dir "$OUTPUT_DIR"
 )
+
+if [[ -n "$UNDERLYINGS" ]]; then
+  CMD+=(--underlyings "$UNDERLYINGS")
+fi
 
 command_string() {
   printf "%q " "${CMD[@]}"
@@ -178,7 +181,7 @@ Environment overrides:
   VENV_DIR        Virtualenv directory, default: $APP_DIR/venv
   PYTHON_BIN      Python executable used to run collector, default: $VENV_PYTHON
   COLLECTOR_COMMAND Fallback collector command when no second argument is given
-  UNDERLYINGS     Underlyings passed to the collector, default: BTC
+  UNDERLYINGS     Optional comma-separated underlyings override
   OUTPUT_DIR      Collector CSV output directory, default: $APP_DIR/data
   LOG_DIR         Directory for logs, default: $APP_DIR/logs
   LOG_FILE        Collector stdout/stderr log file, default: $LOG_FILE

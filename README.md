@@ -6,7 +6,7 @@ Collects matched option market data from Binance Options and Deribit, normalizes
 
 - Discovers matched option contracts between Binance and Deribit for configured underlyings and target expiries.
 - Subscribes to Binance and Deribit websocket streams for both orderbook and trade data.
-- Dynamically selects Deribit BTC options nearest to +/-0.3 Delta across the third through seventh expirations.
+- Dynamically selects Deribit BTC and ETH reversed options nearest to +/-0.3 Delta across the third through seventh expirations.
 - Saves data into per-exchange, per-date, per-type, per-instrument CSV files.
 - Preserves exchange message field names in CSV output and keeps exchange timestamps as raw Unix milliseconds.
 - Writes periodic sink health logs and sends a Lark notification when the process exits.
@@ -53,15 +53,17 @@ Multiple underlyings:
 python collector_main.py run --underlyings BTC,ETH --output-dir data
 ```
 
-Run the dynamic Deribit BTC option book collector:
+Run the dynamic Deribit BTC and ETH reversed option book collector:
 
 ```bash
 python collector_main.py deribit-books --output-dir data
 ```
 
-This command monitors Delta for all options in the third through seventh active
-BTC option expirations. It writes one snapshot per second for the nearest +0.3
-Delta Call and -0.3 Delta Put in each expiration.
+This command defaults to `--underlyings BTC,ETH`. For each currency independently,
+it monitors Delta for all reversed options in the third through seventh active
+expirations and writes one snapshot per second for the nearest +0.3 Delta Call
+and -0.3 Delta Put in each expiration. Pass `--underlyings BTC` or
+`--underlyings ETH` to collect only one currency.
 
 ## Output
 
@@ -78,10 +80,11 @@ data/binance/2026-04-10/trade/BTC-260417-63000-P.csv
 data/deribit/2026-04-10/orderbook/BTC-17APR26-63000-P.csv
 ```
 
-The `deribit-books` command writes one daily UTC file:
+The `deribit-books` command writes separate daily UTC files:
 
 ```text
-data/deribit_options_books_2026-04-10.csv
+data/deribit_btc_options_books_2026-04-10.csv
+data/deribit_eth_options_books_2026-04-10.csv
 ```
 
 ## Linux Server Usage
@@ -122,10 +125,16 @@ UNDERLYINGS=BTC,ETH ./collector_ctl.sh start
 OUTPUT_DIR=/home/ec2-user/app/jason/options/data ./collector_ctl.sh start
 ```
 
-Run the dynamic Deribit book collector in the background:
+Run the dynamic Deribit BTC and ETH book collectors in one background process:
 
 ```bash
 ./collector_ctl.sh start deribit-books
+```
+
+Override the currencies when only one is needed:
+
+```bash
+UNDERLYINGS=ETH ./collector_ctl.sh start deribit-books
 ```
 
 The previous environment-variable form remains supported when no command

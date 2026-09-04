@@ -24,10 +24,7 @@ from collector_planner import chunked
 from options_data import fetch_json, normalize_decimal
 
 
-DERIBIT_INSTRUMENTS_URL = (
-    "https://www.deribit.com/api/v2/public/get_instruments"
-    "?currency=BTC&kind=option&expired=false"
-)
+DERIBIT_INSTRUMENTS_URL = "https://www.deribit.com/api/v2/public/get_instruments"
 EXPIRY_REFRESH_SECONDS = 60 * 60
 SNAPSHOT_INTERVAL_SECONDS = 1.0
 TICKER_INTERVAL = "100ms"
@@ -49,14 +46,31 @@ class BookSnapshot:
     asks: tuple[tuple[object, object], ...]
 
 
-def parse_deribit_instruments(payload: Mapping[str, object]) -> list[DeribitOptionInstrument]:
+def build_deribit_instruments_url(currency: str) -> str:
+    return (
+        f"{DERIBIT_INSTRUMENTS_URL}?currency={currency}"
+        "&kind=option&expired=false"
+    )
+
+
+def parse_deribit_instruments(
+    payload: Mapping[str, object],
+    currency: str,
+) -> list[DeribitOptionInstrument]:
     result = payload.get("result", [])
     if not isinstance(result, list):
         return []
 
     instruments: list[DeribitOptionInstrument] = []
     for item in result:
-        if not isinstance(item, dict) or item.get("is_active") is False:
+        if (
+            not isinstance(item, dict)
+            or item.get("is_active") is False
+            or item.get("instrument_type") != "reversed"
+            or item.get("base_currency") != currency
+            or item.get("quote_currency") != currency
+            or item.get("settlement_currency") != currency
+        ):
             continue
         instrument_name = item.get("instrument_name")
         expiration_timestamp = item.get("expiration_timestamp")
@@ -253,8 +267,9 @@ CSV_FIELDS = [
 
 
 class DailyOptionsBookCsvSink:
-    def __init__(self, output_dir: Path) -> None:
+    def __init__(self, output_dir: Path, currency: str) -> None:
         self.output_dir = Path(output_dir)
+        self.currency = currency.lower()
         self._date = ""
         self._handle: TextIO | None = None
         self._writer: csv.DictWriter | None = None
@@ -281,7 +296,7 @@ class DailyOptionsBookCsvSink:
             return
         self.close()
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        path = self.output_dir / f"deribit_options_books_{utc_date}.csv"
+        path = self.output_dir / f"deribit_{self.currency}_options_books_{utc_date}.csv"
         should_write_header = not path.exists() or path.stat().st_size == 0
         if not should_write_header:
             with path.open("r", newline="", encoding="utf-8-sig") as handle:
@@ -375,6 +390,7 @@ async def _stream_ticker_group(
 async def _run_candidate_supervisor(
     state: DeribitOptionsBookState,
     config: CollectorConfig,
+    currency: str,
     logger: logging.Logger,
 ) -> None:
     workers: list[asyncio.Task] = []
@@ -383,13 +399,17 @@ async def _run_candidate_supervisor(
     try:
         while True:
             try:
-                payload = await asyncio.to_thread(fetch_json, DERIBIT_INSTRUMENTS_URL)
-                instruments = parse_deribit_instruments(payload)
+                payload = await asyncio.to_thread(
+                    fetch_json,
+                    build_deribit_instruments_url(currency),
+                )
+                instruments = parse_deribit_instruments(payload, currency)
                 candidates = select_expiry_candidates(instruments)
                 selected_expirations = {item.expiration_timestamp for item in candidates}
                 if len(selected_expirations) != 5:
                     raise RuntimeError(
-                        "Deribit returned fewer than seven distinct active BTC option expirations"
+                        f"Deribit returned fewer than seven distinct active {currency} "
+                        "reversed option expirations"
                     )
                 candidate_names = tuple(item.instrument_name for item in candidates)
                 if candidate_names != current_names:
@@ -408,15 +428,18 @@ async def _run_candidate_supervisor(
                                     names,
                                     state=state,
                                     config=config,
-                                    logger=logging.getLogger(f"deribit-delta-{index}"),
+                                    logger=logging.getLogger(
+                                        f"deribit-{currency.lower()}-delta-{index}"
+                                    ),
                                 ),
-                                name=f"deribit-delta-{index}",
+                                name=f"deribit-{currency.lower()}-delta-{index}",
                             )
                         )
                     current_names = candidate_names
                     logger.info(
-                        "Monitoring %s options across expirations %s",
+                        "Monitoring %s %s options across expirations %s",
                         len(candidates),
+                        currency,
                         ",".join(str(value) for value in sorted(selected_expirations)),
                     )
                 backoff = config.reconnect_min_seconds
@@ -424,7 +447,11 @@ async def _run_candidate_supervisor(
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # pragma: no cover
-                logger.warning("Deribit option discovery failed; keeping current targets: %s", exc)
+                logger.warning(
+                    "Deribit %s option discovery failed; keeping current targets: %s",
+                    currency,
+                    exc,
+                )
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, config.reconnect_max_seconds)
     finally:
@@ -557,31 +584,74 @@ async def _run_snapshot_loop(
         )
 
 
+async def _run_tasks(tasks: list[asyncio.Task]) -> None:
+    try:
+        await asyncio.gather(*tasks)
+    except asyncio.CancelledError:
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
+async def _run_currency_options_books(
+    config: CollectorConfig,
+    currency: str,
+) -> None:
+    currency_name = currency.lower()
+    state = DeribitOptionsBookState()
+    sink = DailyOptionsBookCsvSink(config.output_dir, currency)
+    tasks = [
+        asyncio.create_task(
+            _run_candidate_supervisor(
+                state,
+                config,
+                currency,
+                logging.getLogger(f"deribit-{currency_name}-discovery"),
+            ),
+            name=f"deribit-{currency_name}-discovery",
+        ),
+        asyncio.create_task(
+            _run_book_manager(
+                state,
+                config,
+                logging.getLogger(f"deribit-{currency_name}-books"),
+            ),
+            name=f"deribit-{currency_name}-books",
+        ),
+        asyncio.create_task(
+            _run_snapshot_loop(state, sink),
+            name=f"deribit-{currency_name}-book-csv",
+        ),
+    ]
+    try:
+        await _run_tasks(tasks)
+    finally:
+        sink.close()
+
+
 async def run_deribit_options_books(config: CollectorConfig) -> None:
-    if config.underlyings != ("BTC",):
-        raise ValueError("deribit-books supports exactly one underlying: BTC")
+    unsupported = sorted(set(config.underlyings) - {"BTC", "ETH"})
+    if unsupported:
+        raise ValueError(
+            "deribit-books supports only BTC and ETH; unsupported: "
+            + ",".join(unsupported)
+        )
+    if not config.underlyings:
+        raise ValueError("deribit-books requires at least one underlying")
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s [%(filename)s:%(lineno)d] %(message)s",
     )
-    state = DeribitOptionsBookState()
-    sink = DailyOptionsBookCsvSink(config.output_dir)
     tasks = [
         asyncio.create_task(
-            _run_candidate_supervisor(state, config, logging.getLogger("deribit-discovery")),
-            name="deribit-discovery",
-        ),
-        asyncio.create_task(
-            _run_book_manager(state, config, logging.getLogger("deribit-books")),
-            name="deribit-books",
-        ),
-        asyncio.create_task(_run_snapshot_loop(state, sink), name="deribit-book-csv"),
+            _run_currency_options_books(config, currency),
+            name=f"deribit-{currency.lower()}",
+        )
+        for currency in dict.fromkeys(config.underlyings)
     ]
-    try:
-        await asyncio.gather(*tasks)
-    finally:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        sink.close()
+    await _run_tasks(tasks)

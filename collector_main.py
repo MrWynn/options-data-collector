@@ -30,8 +30,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--underlyings",
-        default="BTC",
-        help="comma separated underlyings, for example BTC or BTC,ETH",
+        default=None,
+        help=(
+            "comma separated underlyings; defaults to BTC for run/discover "
+            "and BTC,ETH for deribit-books"
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -42,13 +45,19 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_config(args: argparse.Namespace) -> CollectorConfig:
+    default_underlyings = ("BTC", "ETH") if args.command == "deribit-books" else ("BTC",)
+    underlying_text = (
+        args.underlyings
+        if args.underlyings is not None
+        else ",".join(default_underlyings)
+    )
     underlyings = tuple(
         part.strip().upper()
-        for part in args.underlyings.split(",")
+        for part in underlying_text.split(",")
         if part.strip()
     )
     return CollectorConfig(
-        underlyings=underlyings or ("BTC",),
+        underlyings=underlyings or default_underlyings,
         output_dir=Path(args.output_dir),
     )
 
